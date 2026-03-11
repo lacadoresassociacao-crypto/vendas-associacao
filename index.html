@@ -13,72 +13,36 @@ const _FB_PROJECT = 'associacao-lacadores';
 const _FB_API_KEY = 'AIzaSyDc-SBhV01_QdT5B6RvdKOqc36i_ls-WFo';
 const _FB_BASE    = `https://firestore.googleapis.com/v1/projects/${_FB_PROJECT}/databases/(default)/documents`;
 
-// Converte valor JS → formato Firestore REST
-function _toFS(val){
-  if(val===null||val===undefined) return {nullValue:null};
-  if(typeof val==='boolean') return {booleanValue:val};
-  if(typeof val==='number')  return {doubleValue:val};
-  if(typeof val==='string')  return {stringValue:val};
-  if(Array.isArray(val))     return {stringValue:JSON.stringify(val)};
-  if(typeof val==='object'){
-    const fields={};
-    for(const k in val) fields[k]=_toFS(val[k]);
-    return {mapValue:{fields}};
-  }
-  return {stringValue:String(val)};
+// Salva qualquer valor JS como string JSON num campo único "data"
+async function _fbSet(col, key, val){
+  const body={fields:{data:{stringValue:JSON.stringify(val)}}};
+  const url=`${_FB_BASE}/${col}/${key}?key=${_FB_API_KEY}`;
+  const r=await fetch(url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok){ const t=await r.text(); throw new Error(t); }
 }
 
-// Converte formato Firestore REST → valor JS
-function _fromFS(fv){
-  if(!fv) return null;
-  if('nullValue'    in fv) return null;
-  if('booleanValue' in fv) return fv.booleanValue;
-  if('integerValue' in fv) return Number(fv.integerValue);
-  if('doubleValue'  in fv) return fv.doubleValue;
-  if('stringValue'  in fv) return fv.stringValue;
-  if('arrayValue'   in fv) return (fv.arrayValue.values||[]).map(_fromFS);
-  if('mapValue'     in fv){
-    const obj={};
-    const fields=fv.mapValue.fields||{};
-    for(const k in fields) obj[k]=_fromFS(fields[k]);
-    return obj;
-  }
-  return null;
-}
-
-// GET — lê documento do Firestore
+// Lê e desserializa o campo "data"
 async function _fbGet(col, key){
   const url=`${_FB_BASE}/${col}/${key}?key=${_FB_API_KEY}`;
   const r=await fetch(url);
   if(!r.ok) return null;
   const doc=await r.json();
-  if(!doc.fields) return null;
-  const obj={};
-  for(const k in doc.fields) obj[k]=_fromFS(doc.fields[k]);
-  return obj;
+  const raw=doc?.fields?.data?.stringValue;
+  if(raw===undefined) return null;
+  try{ return JSON.parse(raw); }catch(e){ return null; }
 }
 
-// SET — salva documento no Firestore
-async function _fbSet(col, key, data){
-  const fields={};
-  for(const k in data) fields[k]=_toFS(data[k]);
-  const url=`${_FB_BASE}/${col}/${key}?key=${_FB_API_KEY}`;
-  await fetch(url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({fields})});
-}
-
-// Adapta para a interface usada no código
 window._fsDoc          = (col,key)=>({col,key});
 window._fsGetDoc       = (ref)=>_fbGet(ref.col,ref.key);
 window._fsGetDocServer = (ref)=>_fbGet(ref.col,ref.key);
-window._fsSetDoc       = (ref,data)=>_fbSet(ref.col,ref.key,data);
+window._fsSetDoc       = (ref,val)=>_fbSet(ref.col,ref.key,val);
 window._fsSnap         = (ref,cb)=>{
-  // Polling a cada 15s como substituto do onSnapshot
-  cb({exists:()=>false, data:()=>null, metadata:{hasPendingWrites:false}});
-  const iv=setInterval(async()=>{
-    const d=await _fbGet(ref.col,ref.key);
-    if(d) cb({exists:()=>true, data:()=>d, metadata:{hasPendingWrites:false}});
+  setInterval(async()=>{
+    try{
+      const d=await _fbGet(ref.col,ref.key);
+      if(d!==null) cb({exists:()=>true, data:()=>d, metadata:{hasPendingWrites:false}});
+    }catch(e){}
   },15000);
-  return ()=>clearInterval(iv);
 };
 window._fbReady=true;
 
@@ -922,42 +886,35 @@ const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{retur
 const save=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
 
 // ── Firebase helpers (aguarda módulo ES carregar) ──
-// ── Firebase REST helpers ──
-function _fsPayload(val){
-  // Para arrays e primitivos, embala em {_arr:...} ou {_val:...}
-  if(Array.isArray(val)) return {_arr:JSON.stringify(val)};
-  if(typeof val!=='object'||val===null) return {_val:JSON.stringify(val)};
-  return val; // objetos passam direto
-}
-function _fsUnpack(d){
-  if(!d) return null;
-  if(d._arr!==undefined) return JSON.parse(d._arr);
-  if(d._val!==undefined) return JSON.parse(d._val);
-  return d;
-}
-
+// ── Firebase helpers ──
 function fsSet(col, key, val){
-  save('gl_'+col+'_'+key, val);
+  save('gl_'+col+'_'+key, val); // cache local
   if(!window._fbReady) return;
-  try{ window._fsSetDoc(window._fsDoc(col,key), _fsPayload(val)); }catch(e){}
+  try{ window._fsSetDoc(window._fsDoc(col,key), val); }catch(e){}
 }
 
 async function fsGet(col, key, def){
   if(window._fbReady){
     try{
-      const d=await window._fsGetDocServer(window._fsDoc(col,key));
-      if(d){ const v=_fsUnpack(d); if(v!==null){save('gl_'+col+'_'+key,v);return v;} }
+      const v=await window._fsGetDocServer(window._fsDoc(col,key));
+      if(v!==null && v!==undefined){
+        save('gl_'+col+'_'+key, v);
+        return v;
+      }
     }catch(e){}
   }
-  return load('gl_'+col+'_'+key,def);
+  return load('gl_'+col+'_'+key, def);
 }
 
 function fsListen(col, key, cb){
   if(!window._fbReady) return;
   window._fsSnap(window._fsDoc(col,key), s=>{
     if(!s.exists()) return;
-    const v=_fsUnpack(s.data());
-    if(v!==null){save('gl_'+col+'_'+key,v);cb(v);}
+    const v=s.data();
+    if(v!==null && v!==undefined){
+      save('gl_'+col+'_'+key, v);
+      cb(v);
+    }
   });
 }
 const fmt=v=>'R$ '+Number(v).toFixed(2).replace('.',',');
@@ -1929,16 +1886,16 @@ async function sincronizarAgora(){
   try{
     // Envia todos os dados locais para o Firebase
     await Promise.all([
-      window._fsSetDoc(window._fsDoc('cfg','membros'),  {_arr:JSON.stringify(membros)}),
-      window._fsSetDoc(window._fsDoc('cfg','itens'),    {_arr:JSON.stringify(itens)}),
-      window._fsSetDoc(window._fsDoc('cfg','vendas'),   {_arr:JSON.stringify(vendas)}),
+      window._fsSetDoc(window._fsDoc('cfg','membros'),  membros),
+      window._fsSetDoc(window._fsDoc('cfg','itens'),    itens),
+      window._fsSetDoc(window._fsDoc('cfg','vendas'),   vendas),
       window._fsSetDoc(window._fsDoc('cfg','planos'),   PLANOS),
       window._fsSetDoc(window._fsDoc('cfg','creds'),    CREDS),
-      window._fsSetDoc(window._fsDoc('cfg','pix_key'),  {_val:JSON.stringify(PIX_KEY)}),
-      window._fsSetDoc(window._fsDoc('cfg','pix_qr'),   {_val:JSON.stringify(PIX_QR)}),
-      window._fsSetDoc(window._fsDoc('cfg','app_nome'), {_val:JSON.stringify(APP_NOME)}),
-      window._fsSetDoc(window._fsDoc('cfg','app_sub'),  {_val:JSON.stringify(APP_SUB)}),
-      window._fsSetDoc(window._fsDoc('cfg','app_logo'), {_val:JSON.stringify(APP_LOGO)}),
+      window._fsSetDoc(window._fsDoc('cfg','pix_key'),  PIX_KEY),
+      window._fsSetDoc(window._fsDoc('cfg','pix_qr'),   PIX_QR),
+      window._fsSetDoc(window._fsDoc('cfg','app_nome'), APP_NOME),
+      window._fsSetDoc(window._fsDoc('cfg','app_sub'),  APP_SUB),
+      window._fsSetDoc(window._fsDoc('cfg','app_logo'), APP_LOGO),
     ]);
     const now=new Date().toLocaleTimeString('pt-BR');
     st.textContent='✓ Sincronizado às '+now;
