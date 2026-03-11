@@ -774,6 +774,10 @@ tbody tr:hover td{background:rgba(46,204,113,.04);}
       <div class="card">
         <div class="ctitle">🗄 Dados do Sistema</div>
         <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-green" onclick="sincronizarAgora()" id="btn-sync">
+            🔄 Sincronizar com Nuvem
+          </button>
+          <div id="sync-status" style="font-size:11px;color:var(--text3);text-align:center;min-height:16px"></div>
           <button class="btn btn-out" onclick="expBackup()">↓ Exportar Backup JSON</button>
           <button class="btn btn-red" onclick="if(confirm('Apagar TODOS os dados?'))limparTudo()">⚠ Limpar Todos os Dados</button>
         </div>
@@ -1787,6 +1791,43 @@ function limparTudo(){
 // ═══════════════════════════════════════════════
 // INIT — carrega do Firebase (ou localStorage offline)
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// SINCRONIZAÇÃO MANUAL
+// ═══════════════════════════════════════════════
+async function sincronizarAgora(){
+  if(!window._fbReady){ toast('⚠ Firebase não conectado','err'); return; }
+  const btn=document.getElementById('btn-sync');
+  const st=document.getElementById('sync-status');
+  btn.textContent='⏳ Sincronizando...';
+  btn.disabled=true;
+  st.textContent='';
+  try{
+    // Envia todos os dados locais para o Firebase
+    await Promise.all([
+      window._fsSetDoc(window._fsDoc('cfg','membros'),  {_arr:JSON.stringify(membros)}),
+      window._fsSetDoc(window._fsDoc('cfg','itens'),    {_arr:JSON.stringify(itens)}),
+      window._fsSetDoc(window._fsDoc('cfg','vendas'),   {_arr:JSON.stringify(vendas)}),
+      window._fsSetDoc(window._fsDoc('cfg','planos'),   PLANOS),
+      window._fsSetDoc(window._fsDoc('cfg','creds'),    CREDS),
+      window._fsSetDoc(window._fsDoc('cfg','pix_key'),  {_val:JSON.stringify(PIX_KEY)}),
+      window._fsSetDoc(window._fsDoc('cfg','pix_qr'),   {_val:JSON.stringify(PIX_QR)}),
+      window._fsSetDoc(window._fsDoc('cfg','app_nome'), {_val:JSON.stringify(APP_NOME)}),
+      window._fsSetDoc(window._fsDoc('cfg','app_sub'),  {_val:JSON.stringify(APP_SUB)}),
+      window._fsSetDoc(window._fsDoc('cfg','app_logo'), {_val:JSON.stringify(APP_LOGO)}),
+    ]);
+    const now=new Date().toLocaleTimeString('pt-BR');
+    st.textContent='✓ Sincronizado às '+now;
+    st.style.color='var(--accent)';
+    toast('✓ Todos os dados enviados para a nuvem!','ok');
+  } catch(e){
+    st.textContent='⚠ Erro — verifique a conexão';
+    st.style.color='var(--red)';
+    toast('⚠ Erro na sincronização','err');
+  }
+  btn.textContent='🔄 Sincronizar com Nuvem';
+  btn.disabled=false;
+}
+
 // Aguarda Firebase módulo ES carregar, depois inicia
 function startWhenReady(){
   if(window._fbReady) startWhenReady();
