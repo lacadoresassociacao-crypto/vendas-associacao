@@ -467,7 +467,6 @@ tbody tr:hover td{background:rgba(46,204,113,.04);}
             <input type="text" id="mem-search" placeholder="🔍 Buscar membro..."
               autocomplete="off"
               oninput="filtrarMembrosBusca(this.value)"
-              onfocus="abrirDropMem()"
               onblur="setTimeout(()=>fecharDropMem(),200)"
               style="padding-right:32px">
             <span id="mem-search-clear" onclick="limparSelMembro()"
@@ -943,9 +942,11 @@ let APP_LOGO=load('gl_app_logo','');
 let APP_NOME=load('gl_app_nome','GDAAE');
 let APP_SUB=load('gl_app_sub','Associação dos Laçadores');
 
-let membros=load('gl_membros',[]);
-let itens=load('gl_itens',[]);
-let vendas=load('gl_vendas',[]);
+// Membros, itens e vendas NÃO carregam do localStorage na inicialização
+// Sempre vêm do Firebase (com fallback offline via cache do Firebase)
+let membros=[];
+let itens=[];
+let vendas=[];
 
 if(!membros.length){
   membros=[
@@ -1114,12 +1115,17 @@ function renderDropMem(lista){
 }
 
 function filtrarMembrosBusca(q){
-  const lista=q?membros.filter(m=>m.nome.toLowerCase().includes(q.toLowerCase())):membros;
-  renderDropMem(lista);
   const dd=document.getElementById('mem-dropdown');
-  if(dd)dd.style.display='';
   const cl=document.getElementById('mem-search-clear');
-  if(cl)cl.style.display=q?'':'none';
+  if(!q||q.length===0){
+    if(dd)dd.style.display='none';
+    if(cl)cl.style.display='none';
+    return;
+  }
+  const lista=membros.filter(m=>m.nome.toLowerCase().includes(q.toLowerCase()));
+  renderDropMem(lista);
+  if(dd)dd.style.display='';
+  if(cl)cl.style.display='';
 }
 
 function abrirDropMem(){
@@ -1958,7 +1964,6 @@ async function initApp(){
             <input type="text" id="mem-search" placeholder="🔍 Buscar membro..."
               autocomplete="off"
               oninput="filtrarMembrosBusca(this.value)"
-              onfocus="abrirDropMem()"
               onblur="setTimeout(()=>fecharDropMem(),200)"
               style="padding-right:32px">
             <span id="mem-search-clear" onclick="limparSelMembro()"
